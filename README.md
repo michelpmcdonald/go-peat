@@ -10,7 +10,7 @@ go get github.com/michelpmcdonald/go-peat
 
 ## Example
 
-```
+```go
 // A self contained simple demo for go-peat
 package main
 
@@ -38,15 +38,14 @@ func (ts tsRec) GetTimeStamp() time.Time {
 // Now some data is needed, typically this would
 // be from a csv file, but whatever suits ya
 var tsCsv = `weird_name, amt
-		    09/01/2013 17:00:00.083 UTC, 12
-		    09/01/2013 17:00:00.088 UTC, 55
-			09/01/2013 17:00:00.503 UTC, 54
-			09/01/2013 17:00:03.201 UTC, 54`
+	     09/01/2013 17:00:00.083 UTC, 12
+	     09/01/2013 17:00:00.088 UTC, 55
+	     09/01/2013 17:00:00.503 UTC, 54
+	     09/01/2013 17:00:03.201 UTC, 54`
 
 // Define func to convert a csv line slice to our struct
 func csvToTsRec(csv []string) (gopeat.TimeStamper, error) {
-	tim, _ := time.Parse("01/02/2006 15:04:05.999 MST",
-		                 strings.TrimSpace(csv[0]))
+	tim, _ := time.Parse("01/02/2006 15:04:05.999 MST", strings.TrimSpace(csv[0]))
 	amt, _ := strconv.ParseFloat(strings.TrimSpace(csv[1]), 64)
 	return tsRec{tsWeirdName: tim, amt: amt}, nil
 }
@@ -55,9 +54,7 @@ func csvToTsRec(csv []string) (gopeat.TimeStamper, error) {
 // reaches the data's timestamp, so it's in sim soft real time
 func dataOut(ts gopeat.TimeStamper) error {
 	tsd := ts.(tsRec)
-	fmt.Printf("Data Time: %v. Data Amt: %f\n", 
-			   tsd.GetTimeStamp(),
-			   tsd.amt)
+	fmt.Printf("Data Time: %v. Data Amt: %f\n", tsd.GetTimeStamp(), tsd.amt)
 	return nil
 }
 
