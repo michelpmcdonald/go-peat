@@ -50,14 +50,6 @@ func csvToTsRec(csv []string) (gopeat.TimeStamper, error) {
 	return tsRec{tsWeirdName: tim, amt: amt}, nil
 }
 
-// Create a callback to handle data, called when the simulation time
-// reaches the data's timestamp, so it's in sim soft real time
-func dataOut(ts gopeat.TimeStamper) error {
-	tsd := ts.(tsRec)
-	fmt.Printf("Data Time: %v. Data Amt: %f\n", tsd.GetTimeStamp(), tsd.amt)
-	return nil
-}
-
 func main() {
 
 	// A data source is needed. Since our demo data is csv, use
@@ -71,7 +63,11 @@ func main() {
 		CsvTsConv: csvToTsRec,
 	}
 
+	// Playback controls the replay run
 	var sim *gopeat.PlayBack
+	
+	// Create a callback to handle data, called when the simulation time
+	// reaches the data's timestamp, so it's in sim soft real time
 	recCnt := 0
 	dataOut := func(ts gopeat.TimeStamper) error {
 		recCnt++
