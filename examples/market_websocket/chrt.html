@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Go-Peat Demo.</title>
+    <style>
+        html, body {
+            margin: 5px;
+            height: 95%;
+}
+    </style>
+</head>
+
+<body>
+
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <script>
+        window.onload = function () {
+            // Handler when the DOM is fully loaded
+            var chart = LightweightCharts.createChart(document.body, {
+                width: document.body.offsetWidth,
+                height: document.body.offsetHeight,
+                crosshair: {
+                    mode: LightweightCharts.CrosshairMode.Normal,
+                },
+                timeScale: {
+                    timeVisible: true,
+                    secondsVisible: false,
+                },
+            });
+
+            var candleSeries = chart.addCandlestickSeries();
+            var volumeSeries = chart.addHistogramSeries({
+                color: '#26a69a',
+                lineWidth: 2,
+                priceFormat: {
+                    type: 'volume',
+                },
+                overlay: true,
+                scaleMargins: {
+                    top: 0.9,
+                    bottom: 0,
+                },
+            });
+
+
+
+            var currentBar
+            var currentVol
+
+            function mergeTickToBar(price, vol) {
+                if (currentBar.open === null) {
+                    currentBar.open = price;
+                    currentBar.high = price;
+                    currentBar.low = price;
+                    currentBar.close = price;
+                    currentVol.value = vol
+                } else {
+                    currentBar.close = price;
+                    currentBar.high = Math.max(currentBar.high, price);
+                    currentBar.low = Math.min(currentBar.low, price);
+                    currentVol.value += vol
+                }
+                candleSeries.update(currentBar);
+                volumeSeries.update(currentVol)
+            }
+
+            function reset() {
+                candleSeries.setData(data);
+                lastClose = data[data.length - 1].close;
+                lastIndex = data.length - 1;
+
+                targetIndex = lastIndex + 5 + Math.round(Math.random() + 30);
+                targetPrice = getRandomPrice();
+
+                currentIndex = lastIndex + 1;
+                currentBusinessDay = { day: 29, month: 5, year: 2019 };
+                ticksInCurrentBar = 0;
+            }
+
+            function getRandomPrice() {
+                return 10 + Math.round(Math.random() * 10000) / 100;
+            }
+
+            function initWS() {
+                var socket = new WebSocket("ws://localhost:8080/ws"),
+                    container = null //$("#container")
+                socket.onopen = function () {
+                    //container.append("<p>Socket is open</p>");
+                };
+                // Plot incoming ticks as minute bars
+                let firstBar = true
+                var lastBarTime
+                socket.onmessage = function (e) {
+                    let trd = JSON.parse(e.data)
+                    let dt = new Date(parseInt(trd.stamp, 10))
+                    let od = new Date(dt.getTime())
+                    dt.setMilliseconds(0);
+                    dt.setSeconds(0);
+                    let prc = parseFloat(trd.Amt)
+                    let vol = parseInt(trd.Vol)
+                    // New bar needed ?
+                    if (firstBar === true ||
+                        dt.getMinutes() != currentBar.tim.getMinutes()) {
+                        currentBar = {
+                            open: null,
+                            high: null,
+                            low: null,
+                            close: null,
+                            time: dt.getTime() / 1000,
+                            tim: dt,
+                        };
+                        currentVol = {
+                            time: currentBar.time,
+                            value: 0,
+                        }
+                        if (firstBar === false) {
+                            console.log((performance.now() - lastBarTime) / 1000.0)
+                            console.log(od.toUTCString())
+                        }
+                        firstBar = false
+                        lastBarTime = performance.now()
+
+                    }
+                    mergeTickToBar(prc, vol)
+                }
+                socket.onclose = function () {
+                    //container.append("<p>Socket closed</p>");
+                }
+
+                return socket;
+            }
+ 
+            initWS()
+        }
+
+
+    </script>
+</body>
+
+</html>
