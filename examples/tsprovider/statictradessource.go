@@ -28,7 +28,7 @@ func (st *StaticTradesSource) Next() (gopeat.TimeStamper, bool) {
 		st.lastTime = st.lastTime.Add(time.Nanosecond * time.Duration(rand.Intn(899999999)))
 		return Trade{Tim: st.lastTime, Vol: 15, Amt: 3011.25}, true
 	}
-	
+
 	return nil, false
 
 }

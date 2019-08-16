@@ -7,23 +7,21 @@ import (
 )
 
 // CsvToTs converts a csv line slice to a TimeStamper value
-type CsvToTs func([]string) (TimeStamper, error) 
+type CsvToTs func([]string) (TimeStamper, error)
 
-// CsvTsSource implement a time stamped data source for 
+// CsvTsSource implement a time stamped data source for
 // csv data(with header). Client must provide CsvToTs to
 // convert csv data to timestamper value
 type CsvTsSource struct {
 	Symbol    string
 	CsvStream io.Reader
-	CsvTsConv   CsvToTs
+	CsvTsConv CsvToTs
 	csvReader *csv.Reader
 	startTime time.Time
 	endTime   time.Time
 	recCount  int64
 	MaxRecs   int64
 }
-
-
 
 // Next implements an iterator for the contents of the csv data
 func (st *CsvTsSource) Next() (TimeStamper, bool) {

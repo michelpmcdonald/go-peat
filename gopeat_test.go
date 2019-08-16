@@ -69,8 +69,9 @@ func TestPlay(t *testing.T) {
 	pb.send(&wg)
 	fmt.Println("done")
 }
+
 // TestSimRate confirms that the user provided sim rate is translated
-// into PlayBacks simRateDur properly.  A sim rate of 2x and a duration 
+// into PlayBacks simRateDur properly.  A sim rate of 2x and a duration
 // of 4mins should result in a sim duration of 2mins
 func TestSimRate(t *testing.T) {
 	var mts mockTsDataSource
@@ -102,15 +103,15 @@ func TestLoadTsData(t *testing.T) {
 		readCnt++
 		if len(dataBuf) != bufLens[readCnt-1] {
 			t.Errorf("buf %d length: %d; expected %d",
-					 readCnt,
-					 len(dataBuf), 
-					 bufLens[readCnt-1])	
+				readCnt,
+				len(dataBuf),
+				bufLens[readCnt-1])
 		}
 	}
 
 	//Should have 3 reads from the chan
 	if readCnt != 3 {
-		t.Errorf("Got %d Chan reads; expected 3", readCnt)	
+		t.Errorf("Got %d Chan reads; expected 3", readCnt)
 	}
 
 }
