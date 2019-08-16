@@ -33,7 +33,7 @@ var tsCsv = `weird_name, amt
 // Define func to convert a csv line slice to our struct
 func csvToTsRec(csv []string) (gopeat.TimeStamper, error) {
 	tim, _ := time.Parse("01/02/2006 15:04:05.999 MST",
-		                 strings.TrimSpace(csv[0]))
+		strings.TrimSpace(csv[0]))
 	amt, _ := strconv.ParseFloat(strings.TrimSpace(csv[1]), 64)
 	return tsRec{tsWeirdName: tim, amt: amt}, nil
 }
@@ -41,8 +41,8 @@ func csvToTsRec(csv []string) (gopeat.TimeStamper, error) {
 func main() {
 
 	// A data source is needed. Since our demo data is csv, use
-	// gopeats csv time stamper source and provide the data and 
-	// the csv line converter. It implements the needed interfaces. 
+	// gopeats csv time stamper source and provide the data and
+	// the csv line converter. It implements the needed interfaces.
 	// Create your own source as needed, just implement
 	// TimeBracket and TimeStampSource interfaces
 	tsSource := &gopeat.CsvTsSource{
@@ -53,7 +53,7 @@ func main() {
 
 	// PlayBack controls the sim run
 	var sim *gopeat.PlayBack
-	
+
 	// Create a callback to handle data, called when the simulation time
 	// reaches the data's timestamp, so it's in sim soft real time
 	recCnt := 0
@@ -64,9 +64,9 @@ func main() {
 			close(sim.StopChan)
 		}
 		tsd := ts.(tsRec)
-		fmt.Printf("Data Time: %v. Data Amt: %f\n", 
-				   tsd.GetTimeStamp(),
-				   tsd.amt)
+		fmt.Printf("Data Time: %v. Data Amt: %f\n",
+			tsd.GetTimeStamp(),
+			tsd.amt)
 		return nil
 	}
 
