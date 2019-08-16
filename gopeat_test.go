@@ -63,7 +63,7 @@ func TestPlay(t *testing.T) {
 		}
 		return nil
 	}
-	// Write the time stampted data buffer to the data chan
+	// Write the time stamped data buffer to the data chan
 	pb.tsDataChan <- []TimeStamper{mockTsData{Tim: dataTime, Val: 6}}
 	close(pb.tsDataChan)
 	pb.send(&wg)
@@ -94,7 +94,7 @@ func TestLoadTsData(t *testing.T) {
 	pb.tsDataBufSize = 10
 
 	// load data into the chan
-	go pb.loadTimeStamptedData()
+	go pb.loadTimeStampedData()
 
 	readCnt := 0
 	bufLens := [6]int{10, 10, 3}

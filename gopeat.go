@@ -1,6 +1,6 @@
-// Package gopeat provides functionality to replay time stampted data
+// Package gopeat provides functionality to replay time stamped data
 // with BESRTA(best effort soft real time accuracy). Playback preserves
-// time between consecutive time stampted data values so any time drifts
+// time between consecutive time stamped data values so any time drifts
 // will be accumulated over the total run time.
 package gopeat
 
@@ -39,7 +39,7 @@ type TimeStampSource interface {
 }
 
 // OnTsDataReady is the function the Playback client should provide to
-// the playback to receive the timestamped data at simulation time.
+// the playback to receive the time stamped data at simulation time.
 // The client implementation should return as soon as the time sensitive
 // part of it's processing is complete in order to keep Playback's
 // internal backpressure calculation accurate
@@ -100,7 +100,7 @@ func New(symbol string,
 	// buffered chan
 	pb.tsDataChanLen = 5
 
-	// Chan for incoming timestampted data from tsDataSource
+	// Chan for incoming time stamped data from tsDataSource
 	pb.tsDataChan = make(chan []TimeStamper, pb.tsDataChanLen)
 
 	// Stop chan, call close to end simulation
@@ -119,19 +119,19 @@ func New(symbol string,
 	return pb, nil
 }
 
-// loadTimeStamptedData reads data from the source into a slice and
+// loadTimeStampedData reads data from the source into a slice and
 // then writes the slice to a chan.  A slice is used to reduce chan
 // contention between this loader and the sender. A buffered chan is
 // used so data can be preloaded and the sender does not have to block
 // waiting for data. While the sender is consuming a slice of
 // time stamped data from the chan, the loader reads ahead more data
 // into a slice and writes the slice to the chan.
-func (pb *PlayBack) loadTimeStamptedData() {
+func (pb *PlayBack) loadTimeStampedData() {
 
 	// Close the chan when done loading data
 	defer close(pb.tsDataChan)
 
-	// Buffer holds chunks of time stampted data
+	// Buffer holds chunks of time stamped data
 	tsDataBuf := make([]TimeStamper, 0, pb.tsDataBufSize)
 
 	for {
@@ -176,7 +176,7 @@ func (pb *PlayBack) Play() {
 
 	// Start loading timestamped data from time stamp source,
 	// wait a few seconds to read-buffer-chan write some data
-	go pb.loadTimeStamptedData()
+	go pb.loadTimeStampedData()
 	time.Sleep(5 * time.Second)
 
 	// Start sending the time stamp data back out at sim time
@@ -194,7 +194,7 @@ func (pb *PlayBack) Play() {
 
 // send outputs the timestamp data at simulation times. At the
 // appropriate simulation time the client provided callback is invoked
-// with the timestampted data.
+// with the time stamped data.
 func (pb *PlayBack) send(wg *sync.WaitGroup) {
 	defer wg.Done()
 
@@ -221,7 +221,7 @@ func (pb *PlayBack) send(wg *sync.WaitGroup) {
 	// Wall time of the prev tsData send
 	prevWallSendTime := pb.WallStartTime
 
-	// read next slice of time stampted data from chan
+	// read next slice of time stamped data from chan
 	for tsDataBuf := range pb.tsDataChan {
 
 		// process each ts value from slice
