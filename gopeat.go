@@ -32,8 +32,12 @@ type TimeBracket interface {
 
 // TimeStampSource is implemented by any value that has a Next iterator
 // method which returns TimeStamper values.  When ok is false iterator
-// is past the last value and the previous Next call returned
-// the last value.
+// is past the last value and the previous Next call returned the last
+// value.  The way playback is currently designed, a implementor of
+// TimeStampSource should have a complete stream of data available so
+// next can either return the next value or return EOF.  If Next()
+// blocks, the loader goroutine will block and it will never
+// terminate on it's own.  This design will be revisited.(TODO)
 type TimeStampSource interface {
 	Next() (tsData TimeStamper, ok bool)
 }
@@ -42,7 +46,8 @@ type TimeStampSource interface {
 // the playback to receive the time stamped data at simulation time.
 // The client implementation should return as soon as the time sensitive
 // part of it's processing is complete in order to keep Playback's
-// internal backpressure calculation accurate
+// internal backpressure calculation accurate. OnTsDataReady runs on
+// Playback's send thread, not the clients thread
 type OnTsDataReady func(TimeStamper) error
 
 // PlayBack implements a simulation run.  Playback clients need to
@@ -50,19 +55,38 @@ type OnTsDataReady func(TimeStamper) error
 // TimeStampSource interfaces.  Clients can stop the playback
 // by closing StopChan.
 type PlayBack struct {
-	Symbol        string
-	StartTime     time.Time
-	EndTime       time.Time
-	SendTs        OnTsDataReady
-	TsDataSource  TimeStampSource
-	StopChan      chan struct{}
-	PauseChan     chan struct{}
-	SimRate       int16
-	simRatDur     time.Duration
+	Symbol       string
+	StartTime    time.Time
+	EndTime      time.Time
+	SendTs       OnTsDataReady
+	TsDataSource TimeStampSource
+	WallRunDur   time.Duration
+
+	// Client specifies rate Ex: 2 = 2x, store it as
+	// a duration for actual time use
+	SimRate   int16
+	simRatDur time.Duration
+
+	// Source-Sender TimeStamper Data
 	tsDataChan    chan []TimeStamper
 	tsDataChanLen int
 	tsDataBufSize int
-	timingsInfo   *list.List
+
+	// API Control chans
+	quitChan   chan struct{}
+	pauseChan  chan struct{}
+	resumeChan chan struct{}
+
+	// API Control flags to support
+	// idempotent play-pause-resume-quit
+	paused       bool
+	replayActive bool
+
+	// Holds run time timing info for reporting
+	timingsInfo *list.List
+
+	wg sync.WaitGroup
+
 	WallStartTime time.Time
 }
 
@@ -92,22 +116,13 @@ func New(symbol string,
 
 	// Hard code right now to 500.  Indicates the number of
 	// timestamper data values read from the timestamper source and
-	// accumulated in a buffer beforethe buffer is written
+	// accumulated in a buffer before the buffer is written
 	// to the data channel for sending
 	pb.tsDataBufSize = 500
 
 	// Hard code to 5 for right now. Indicates the size of the
 	// buffered chan
 	pb.tsDataChanLen = 5
-
-	// Chan for incoming time stamped data from tsDataSource
-	pb.tsDataChan = make(chan []TimeStamper, pb.tsDataChanLen)
-
-	// Stop chan, call close to end simulation
-	pb.StopChan = make(chan struct{})
-
-	// Pause chan, write any value to pause simulation(not impl yet)
-	pb.PauseChan = make(chan struct{})
 
 	// Notify timestamper data source of playback start-end times
 	pb.TsDataSource.(TimeBracket).SetStartTime(startTime)
@@ -117,6 +132,77 @@ func New(symbol string,
 	pb.simRatDur = time.Duration(pb.SimRate)
 
 	return pb, nil
+}
+
+// init prepare for new run
+func (pb *PlayBack) init() {
+	pb.tsDataChan = make(chan []TimeStamper, pb.tsDataChanLen)
+
+	pb.pauseChan = make(chan struct{})
+	pb.resumeChan = make(chan struct{})
+	pb.quitChan = make(chan struct{})
+
+	pb.paused = false
+	pb.replayActive = false
+}
+
+// Play starts replay process
+func (pb *PlayBack) Play() {
+	if !pb.replayActive {
+		pb.init()
+
+		// Start loading timestamped data from time stamp source,
+		// wait a few seconds to read-buffer-chan write some data
+		go pb.loadTimeStampedData()
+		time.Sleep(5 * time.Second)
+
+		// Start sending the time stamp data back out at sim time
+		pb.wg.Add(1)
+		go pb.send()
+		pb.replayActive = true
+	}
+}
+
+// Pause suspends the running replay
+func (pb *PlayBack) Pause() {
+	if !pb.paused && pb.replayActive {
+
+		// Open up the resume chan to allow ending the
+		// pause which is being initiated here
+		pb.resumeChan = make(chan struct{})
+
+		// Send pause signal
+		close(pb.pauseChan)
+		pb.paused = true
+	}
+}
+
+// Resume continues a paused playback
+func (pb *PlayBack) Resume() {
+	if pb.paused {
+
+		// Open up the pause chan to allow pausing the
+		// playback which is being restarted here
+		pb.pauseChan = make(chan struct{})
+
+		// Send resume signal
+		close(pb.resumeChan)
+		pb.paused = false
+	}
+}
+
+// Quit stops the running PlayBack and eventually unblocks callers
+// blocked on Wait()
+func (pb *PlayBack) Quit() {
+	if pb.replayActive {
+		close(pb.quitChan)
+	}
+}
+
+// Wait blocks until the sender shuts down
+func (pb *PlayBack) Wait() {
+	pb.wg.Wait()
+	pb.replayActive = false
 }
 
 // loadTimeStampedData reads data from the source into a slice and
@@ -142,23 +228,25 @@ func (pb *PlayBack) loadTimeStampedData() {
 			break
 		}
 
+		// Stop if quit is signaled
 		select {
-		default:
-			tsDataBuf = append(tsDataBuf, tsData)
-
-			// If the buffer slice is full, write it to the chan
-			if len(tsDataBuf) == pb.tsDataBufSize {
-
-				// sendBuf now refers to the buffers slice data
-				sendBuf := tsDataBuf
-				pb.tsDataChan <- sendBuf
-
-				// buffer is reallocated to a new slice
-				tsDataBuf = make([]TimeStamper, 0, pb.tsDataBufSize)
-			}
-		// Stop if StopChan is signaled
-		case <-pb.StopChan:
+		case <-pb.quitChan:
 			return
+		default:
+			//stop chan is still open
+		}
+
+		tsDataBuf = append(tsDataBuf, tsData)
+
+		// If the buffer slice is full, write it to the chan
+		if len(tsDataBuf) == pb.tsDataBufSize {
+
+			// sendBuf now refers to the buffers slice data
+			sendBuf := tsDataBuf
+			pb.tsDataChan <- sendBuf
+
+			// buffer is reallocated to a new slice
+			tsDataBuf = make([]TimeStamper, 0, pb.tsDataBufSize)
 		}
 	}
 	// source is empty, send any remaining data in the buffer
@@ -167,36 +255,12 @@ func (pb *PlayBack) loadTimeStampedData() {
 	}
 }
 
-// Play starts replay process, blocks until run is complete
-func (pb *PlayBack) Play() {
-
-	// Wait group for send completion
-	var wg sync.WaitGroup
-	wg.Add(1)
-
-	// Start loading timestamped data from time stamp source,
-	// wait a few seconds to read-buffer-chan write some data
-	go pb.loadTimeStampedData()
-	time.Sleep(5 * time.Second)
-
-	// Start sending the time stamp data back out at sim time
-	wallStart := time.Now()
-	go pb.send(&wg)
-
-	wg.Wait()
-	// Calc performance results
-	wallEnd := time.Now()
-	pb.TimeDrift(*pb.timingsInfo)
-	fmt.Printf("Actual Run time: %f(s)\n",
-		wallEnd.Sub(wallStart).Seconds())
-
-}
-
 // send outputs the timestamp data at simulation times. At the
 // appropriate simulation time the client provided callback is invoked
 // with the time stamped data.
-func (pb *PlayBack) send(wg *sync.WaitGroup) {
-	defer wg.Done()
+func (pb *PlayBack) send() {
+	defer pb.wg.Done()
+	defer func() { pb.WallRunDur = time.Since(pb.WallStartTime) }()
 
 	// A list has the constant insert time
 	// that is needed in the timing loop
@@ -212,6 +276,9 @@ func (pb *PlayBack) send(wg *sync.WaitGroup) {
 	// changes.
 	var driftFactor time.Duration
 
+	// Keep track of pause time, set to 0 after using
+	pauseDur := time.Duration(0 * time.Second)
+
 	// Wall simulation start time
 	pb.WallStartTime = time.Now()
 
@@ -219,7 +286,7 @@ func (pb *PlayBack) send(wg *sync.WaitGroup) {
 	prevTsDataTime := pb.StartTime
 
 	// Wall time of the prev tsData send
-	prevWallSendTime := pb.WallStartTime
+	prevWallSendTime := time.Now()
 
 	// read next slice of time stamped data from chan
 	for tsDataBuf := range pb.tsDataChan {
@@ -235,7 +302,7 @@ func (pb *PlayBack) send(wg *sync.WaitGroup) {
 
 				// actual wall time between now and the time the prev
 				// ts data value was sent out
-				wallDur := time.Since(prevWallSendTime)
+				wallDur := time.Since(prevWallSendTime) - pauseDur
 
 				// sleep duration is the diff between the time between
 				// ts data values and the wall time since the prev
@@ -251,7 +318,8 @@ func (pb *PlayBack) send(wg *sync.WaitGroup) {
 				time.Sleep(sd - driftFactor)
 
 				// Client call back ie the send.
-				// This is the time sensitive point of consumption
+				// This is the time sensitive point of consumption.
+				// The whole point. Pièce de résistance
 				pb.SendTs(tsData)
 				wallSendTime := time.Now()
 
@@ -259,8 +327,11 @@ func (pb *PlayBack) send(wg *sync.WaitGroup) {
 				// time stamp calculated desired time between sends.
 				// Drift can go negative due to the drift factor
 				// causing the client send to happen to early.
-				driftDur := wallSendTime.Sub(prevWallSendTime) -
+				driftDur := (wallSendTime.Sub(prevWallSendTime) - pauseDur) -
 					(intervaleDur / pb.simRatDur)
+
+				// reset pause duration, done with pause adjustments
+				pauseDur = time.Duration(0 * time.Second)
 
 				// Collect timing data
 				rt := runTimings{}
@@ -287,14 +358,21 @@ func (pb *PlayBack) send(wg *sync.WaitGroup) {
 				// and the client callback gets called later.
 				driftFactor = driftFactor + rt.driftDur
 
-			case <-pb.StopChan:
+			case <-pb.quitChan:
 				// stop the playback
 				return
-			case <-pb.PauseChan:
-				// temp, add actual pause code here
-				// Need a way to restart
-				// Need a way to account for pause time for
-				// next trade that goes out
+
+			case <-pb.pauseChan:
+				pWallStart := time.Now()
+				fmt.Println("now pause")
+				select {
+				case <-pb.resumeChan:
+					fmt.Println("now resume")
+					pauseDur = time.Since(pWallStart) + pauseDur
+				case <-pb.quitChan:
+					// stop the playback
+					return
+				}
 			}
 		}
 	}
@@ -311,10 +389,10 @@ type runTimings struct {
 }
 
 // TimeDrift calculates some run time timing info
-func (pb *PlayBack) TimeDrift(actSecs list.List) {
+func (pb *PlayBack) TimeDrift() {
 	maxDrift := 0.0
 	var actSec runTimings
-	for el := actSecs.Front(); el != nil; el = el.Next() {
+	for el := pb.timingsInfo.Front(); el != nil; el = el.Next() {
 		actSec = el.Value.(runTimings)
 
 		maxDrift = math.Max(maxDrift, math.Abs(actSec.driftDur.Seconds()/1000))

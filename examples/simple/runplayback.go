@@ -12,9 +12,9 @@ import (
 	"github.com/michelpmcdonald/go-peat/examples/tsprovider"
 )
 
-var simStart = time.Date(2013, 9, 3, 0, 0, 0, 0, time.UTC)
+var simStart = time.Date(2013, 9, 3, 8, 30, 0, 0, time.UTC)
 var simEnd = time.Date(2013, 9, 3, 15, 59, 59, 999, time.UTC)
-var simRate = int16(5000)
+var simRate = int16(2500)
 var simDurRate = time.Duration(simRate)
 
 var wallStartTime *time.Time
@@ -37,7 +37,7 @@ var dataOut = func(ts gopeat.TimeStamper) error {
 	wallDur := time.Since(*wallStartTime)
 
 	// expected wall duration. For example, if the data should appear
-	// 30 seconds after the start time and the sime is running at 2x
+	// 30 seconds after the start time and the sim is running at 2x
 	// expect that callback at 15 seconds wall time into the sim run
 	expDur := ts.GetTimeStamp().Sub(simStart) / simDurRate
 
@@ -90,6 +90,18 @@ func main() {
 
 	// Start the playback
 	sim.Play()
+	time.Sleep(5 * time.Second)
+	sim.Pause()
+	time.Sleep(10 * time.Second)
+	sim.Resume()
+	sim.Resume()
+	time.Sleep(10 * time.Second)
+	sim.Quit()
+
+	sim.Wait()
+
+	sim.TimeDrift()
+	fmt.Printf("Actual Run time: %f(s)\n", sim.WallRunDur.Seconds())
 
 	fmt.Printf("Vwap: %f\n", cumPrice/float64(cumVol))
 	fmt.Printf("total vol %d\n", cumVol)

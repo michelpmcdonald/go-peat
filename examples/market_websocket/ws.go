@@ -84,15 +84,13 @@ func sendSimTicks(conn *websocket.Conn) {
 		err := conn.WriteJSON(ts.(tsprovider.Trade))
 		if err != nil {
 			fmt.Println(err)
-			// Signal playback to stop and wait for it to stop
-			close(pb.StopChan)
-			<-pb.StopChan
 		}
 		return err
 	}
 
 	// Start the playback
 	pb.Play()
+	pb.Wait()
 	fmt.Println("Playback concluded")
 
 }

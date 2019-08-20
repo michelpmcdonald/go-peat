@@ -61,7 +61,7 @@ func main() {
 		recCnt++
 		if recCnt > 2 {
 			// Stop the sim early, skip last record
-			close(sim.StopChan)
+			sim.Quit()
 		}
 		tsd := ts.(tsRec)
 		fmt.Printf("Data Time: %v. Data Amt: %f\n",
@@ -79,6 +79,9 @@ func main() {
 		2,       //Sim rate
 		dataOut) //Call back
 
-	//Play it blocks til done
+	// Start the replay
 	sim.Play()
+
+	// Block until done
+	sim.Wait()
 }
