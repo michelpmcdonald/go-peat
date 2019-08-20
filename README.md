@@ -4,7 +4,7 @@
 
 ## Motivation and Example Uses
 
-I've needed common replay capability in several projects. Gopeat(re-peat idk...) was created as a general replay library(DRY) that can be used with a time-stamped sorted data stream that can be represented as a golang struct with a time.Time getter.
+I've needed common replay capability in several projects. Gopeat(re-peat idk...) was created as a general replay library(DRY) designed to be used with a time-stamped sorted data stream that can be represented as a golang struct with a time.Time getter.
 
 Some Examples:
 
@@ -81,10 +81,10 @@ func (ts tsRec) GetTimeStamp() time.Time {
 // Now some data is needed, typically this would
 // be from a csv file, but whatever suits ya
 var tsCsv = `weird_name, amt
-		    09/01/2013 17:00:00.083 UTC, 12
-		    09/01/2013 17:00:00.088 UTC, 55
-			09/01/2013 17:00:00.503 UTC, 54
-			09/01/2013 17:00:03.201 UTC, 54`
+	     09/01/2013 17:00:00.083 UTC, 12
+	     09/01/2013 17:00:00.088 UTC, 55
+	     09/01/2013 17:00:00.503 UTC, 54
+	     09/01/2013 17:00:03.201 UTC, 54`
 
 // Define func to convert a csv line slice to our struct
 func csvToTsRec(csv []string) (gopeat.TimeStamper, error) {
