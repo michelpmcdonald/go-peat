@@ -90,14 +90,15 @@ func main() {
 
 	// Start the playback
 	sim.Play()
-	time.Sleep(5 * time.Second)
+	time.Sleep(1 * time.Second)
 	sim.Pause()
+	fmt.Println("Pause*********************************************")
 	time.Sleep(10 * time.Second)
 	sim.Resume()
-	sim.Resume()
-	time.Sleep(10 * time.Second)
-	sim.Quit()
 
+	fmt.Println("")
+	fmt.Println("waiting for complete")
+	fmt.Println("")
 	sim.Wait()
 
 	sim.TimeDrift()

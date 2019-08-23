@@ -72,6 +72,9 @@ type PlayBack struct {
 	tsDataChanLen int
 	tsDataBufSize int
 
+	// Sim timed output
+	timedTs chan TimeStamper
+
 	// API Control chans
 	quitChan   chan struct{}
 	pauseChan  chan struct{}
@@ -82,10 +85,12 @@ type PlayBack struct {
 	paused       bool
 	replayActive bool
 
+	controllerStarted sync.WaitGroup
+
 	// Holds run time timing info for reporting
 	timingsInfo *list.List
 
-	wg sync.WaitGroup
+	controllerStopped sync.WaitGroup
 
 	WallStartTime time.Time
 }
@@ -137,6 +142,7 @@ func New(symbol string,
 // init prepare for new run
 func (pb *PlayBack) init() {
 	pb.tsDataChan = make(chan []TimeStamper, pb.tsDataChanLen)
+	pb.timedTs = make(chan TimeStamper)
 
 	pb.pauseChan = make(chan struct{})
 	pb.resumeChan = make(chan struct{})
@@ -144,29 +150,24 @@ func (pb *PlayBack) init() {
 
 	pb.paused = false
 	pb.replayActive = false
+	pb.timingsInfo = nil
 }
 
 // Play starts replay process
 func (pb *PlayBack) Play() {
 	if !pb.replayActive {
-		pb.init()
-
-		// Start loading timestamped data from time stamp source,
-		// wait a few seconds to read-buffer-chan write some data
-		go pb.loadTimeStampedData()
-		time.Sleep(5 * time.Second)
-
-		// Start sending the time stamp data back out at sim time
-		pb.wg.Add(1)
-		go pb.send()
-		pb.replayActive = true
+		// Start up the controller, controller starts and controls
+		// the replay
+		pb.controllerStopped.Add(1)
+		pb.controllerStarted.Add(1)
+		go pb.controller()
+		pb.controllerStarted.Wait()
 	}
 }
 
 // Pause suspends the running replay
 func (pb *PlayBack) Pause() {
 	if !pb.paused && pb.replayActive {
-
 		// Open up the resume chan to allow ending the
 		// pause which is being initiated here
 		pb.resumeChan = make(chan struct{})
@@ -196,12 +197,13 @@ func (pb *PlayBack) Resume() {
 func (pb *PlayBack) Quit() {
 	if pb.replayActive {
 		close(pb.quitChan)
+		pb.replayActive = false
 	}
 }
 
 // Wait blocks until the sender shuts down
 func (pb *PlayBack) Wait() {
-	pb.wg.Wait()
+	pb.controllerStopped.Wait()
 	pb.replayActive = false
 }
 
@@ -214,15 +216,11 @@ func (pb *PlayBack) Wait() {
 // into a slice and writes the slice to the chan.
 func (pb *PlayBack) loadTimeStampedData() {
 
-	// Close the chan when done loading data
 	defer close(pb.tsDataChan)
 
-	// Buffer holds chunks of time stamped data
 	tsDataBuf := make([]TimeStamper, 0, pb.tsDataBufSize)
 
 	for {
-		// Get the next time stamped data value from
-		// the source until it is empty
 		tsData, more := pb.TsDataSource.Next()
 		if !more {
 			break
@@ -233,7 +231,6 @@ func (pb *PlayBack) loadTimeStampedData() {
 		case <-pb.quitChan:
 			return
 		default:
-			//stop chan is still open
 		}
 
 		tsDataBuf = append(tsDataBuf, tsData)
@@ -255,12 +252,58 @@ func (pb *PlayBack) loadTimeStampedData() {
 	}
 }
 
-// send outputs the timestamp data at simulation times. At the
-// appropriate simulation time the client provided callback is invoked
-// with the time stamped data.
-func (pb *PlayBack) send() {
-	defer pb.wg.Done()
+// controller starts a new playback run and handles PlayBack API
+// commands. Blocks, but never sleeps. Terminates when there is no
+// more data or an API command stops it
+func (pb *PlayBack) controller() {
+	defer pb.controllerStopped.Done()
 	defer func() { pb.WallRunDur = time.Since(pb.WallStartTime) }()
+
+	// Start with a clean slate
+	pb.init()
+	pb.replayActive = true
+
+	// Start loading timestamped data from time stamp source,
+	// wait a few seconds to fill up read ahead buffers
+	go pb.loadTimeStampedData()
+	time.Sleep(1 * time.Second)
+
+	// Start the timed data producer
+	fmt.Println(time.Now())
+	go pb.dataTimer()
+
+	// Wall simulation start time
+	pb.WallStartTime = time.Now()
+
+	pb.controllerStarted.Done()
+
+	for {
+		select {
+		// data comes in at sim time on
+		// timedTs chan.
+		case tsData, ok := <-pb.timedTs:
+			if !ok {
+				// All data has been sent
+				return
+			}
+			// Client supplied callback
+			pb.SendTs(tsData)
+		case <-pb.quitChan:
+			return
+		case <-pb.pauseChan:
+			select {
+			case <-pb.resumeChan:
+			case <-pb.quitChan:
+				return
+			}
+		}
+	}
+}
+
+// dataTimer outputs the timestamp data at simulation time on the
+// timedTs chan
+func (pb *PlayBack) dataTimer() {
+	defer close(pb.timedTs)
 
 	// A list has the constant insert time
 	// that is needed in the timing loop
@@ -279,9 +322,6 @@ func (pb *PlayBack) send() {
 	// Keep track of pause time, set to 0 after using
 	pauseDur := time.Duration(0 * time.Second)
 
-	// Wall simulation start time
-	pb.WallStartTime = time.Now()
-
 	// Sim timestamp of the previous tsData sent
 	prevTsDataTime := pb.StartTime
 
@@ -290,96 +330,101 @@ func (pb *PlayBack) send() {
 
 	// read next slice of time stamped data from chan
 	for tsDataBuf := range pb.tsDataChan {
-
-		// process each ts value from slice
 		for _, tsData := range tsDataBuf {
+			tsRecCnt++
+		SleepCheck:
+			// Check for pause or quit signals
 			select {
-			default:
-				tsRecCnt++
-
-				// time between this ts data and the prev ts data
-				intervaleDur := tsData.GetTimeStamp().Sub(prevTsDataTime)
-
-				// actual wall time between now and the time the prev
-				// ts data value was sent out
-				wallDur := time.Since(prevWallSendTime) - pauseDur
-
-				// sleep duration is the diff between the time between
-				// ts data values and the wall time since the prev
-				// data value was sent.
-				// For example, if the next ts data item is supposed to
-				// go out 2 seconds after the prev data item, and it's
-				// been .5 seconds since the prev item was sent, sleep
-				// 1.5 seconds before sending to hit the 2 second mark.
-				sd := (intervaleDur - wallDur) / pb.simRatDur
-
-				// adjust sleep duration by drift factor to account for
-				// last client callback time.
-				time.Sleep(sd - driftFactor)
-
-				// Client call back ie the send.
-				// This is the time sensitive point of consumption.
-				// The whole point. Pièce de résistance
-				pb.SendTs(tsData)
-				wallSendTime := time.Now()
-
-				// driftDur is actual wall time between sends minus the
-				// time stamp calculated desired time between sends.
-				// Drift can go negative due to the drift factor
-				// causing the client send to happen to early.
-				driftDur := (wallSendTime.Sub(prevWallSendTime) - pauseDur) -
-					(intervaleDur / pb.simRatDur)
-
-				// reset pause duration, done with pause adjustments
-				pauseDur = time.Duration(0 * time.Second)
-
-				// Collect timing data
-				rt := runTimings{}
-				rt.trdTime = tsData.GetTimeStamp()
-				rt.sd = sd
-				rt.recNum = tsRecCnt
-				rt.driftDur = driftDur
-				pb.timingsInfo.PushBack(rt)
-
-				// Set up loop for next iteration
-				prevWallSendTime = wallSendTime
-				prevTsDataTime = tsData.GetTimeStamp()
-
-				// Re-calc drift factor.
-				// If the last send's drift was positive the client
-				// callback took longer than expected. In this case the
-				// drift factor is increased which causes the pre send
-				// sleep duration to decrease. The shorter sleep
-				// duration causes the client callback to get called
-				// earlier to account for its lag.
-				// A negative drift means the client callback was faster
-				// than expected.  In this case the drift factor is
-				// decreased, the pre send sleep duration is increased,
-				// and the client callback gets called later.
-				driftFactor = driftFactor + rt.driftDur
-
 			case <-pb.quitChan:
 				// stop the playback
 				return
 
 			case <-pb.pauseChan:
 				pWallStart := time.Now()
-				fmt.Println("now pause")
 				select {
 				case <-pb.resumeChan:
-					fmt.Println("now resume")
 					pauseDur = time.Since(pWallStart) + pauseDur
 				case <-pb.quitChan:
 					// stop the playback
 					return
 				}
+			default:
 			}
+
+			// time between this ts data and the prev ts data
+			// adjusted for sim rate TODO rename tsDur
+			intervaleDur := tsData.GetTimeStamp().Sub(prevTsDataTime)
+			intervaleDur = intervaleDur / pb.simRatDur
+
+			// actual wall time between now and the time the prev
+			// ts data value was sent out
+			wallDur := time.Since(prevWallSendTime) - pauseDur
+
+			// sleep duration is the diff between the time between
+			// ts data values and the wall time since the prev
+			// data value was sent.
+			// For example, if the next ts data item is supposed to
+			// go out 2 seconds after the prev data item, and it's
+			// been .5 seconds since the prev item was sent, sleep
+			// 1.5 seconds before sending to hit the 2 second mark.
+			sd := (intervaleDur - wallDur) - driftFactor
+
+			// Only sleep up to 500 ms at a time so this method
+			// can continue to respond to API signals, otherwise the
+			// longest sleep duration is data driven and unbound
+			if sd > (250 * time.Millisecond) {
+				time.Sleep(250 * time.Millisecond)
+				goto SleepCheck
+			}
+			time.Sleep(sd)
+
+			// Client call back ie the send.
+			// This is the time sensitive point of consumption.
+			// The whole point. Pièce de résistance
+			//pb.SendTs(tsData)
+			pb.timedTs <- tsData
+			wallSendTime := time.Now()
+
+			// driftDur is actual wall time between sends minus the
+			// time stamp calculated desired time between sends.
+			// Drift can go negative due to the drift factor
+			// causing the client send to happen to early.
+			driftDur := (wallSendTime.Sub(prevWallSendTime) - pauseDur) -
+				(intervaleDur)
+
+			// reset pause duration, done with pause adjustments
+			pauseDur = time.Duration(0 * time.Second)
+
+			// Collect timing data
+			rt := runTimings{}
+			rt.trdTime = tsData.GetTimeStamp()
+			rt.sd = sd
+			rt.recNum = tsRecCnt
+			rt.driftDur = driftDur
+			pb.timingsInfo.PushBack(rt)
+
+			// Set up loop for next iteration
+			prevWallSendTime = wallSendTime
+			prevTsDataTime = tsData.GetTimeStamp()
+
+			// Re-calc drift factor.
+			// If the last send's drift was positive the client
+			// callback took longer than expected. In this case the
+			// drift factor is increased which causes the pre send
+			// sleep duration to decrease. The shorter sleep
+			// duration causes the client callback to get called
+			// earlier to account for its lag.
+			// A negative drift means the client callback was faster
+			// than expected.  In this case the drift factor is
+			// decreased, the pre send sleep duration is increased,
+			// and the client callback gets called later.
+			driftFactor = driftFactor + rt.driftDur
 		}
 	}
 }
 
-// runTimings holds timing info for each data value in the simulation
-// run
+// runTimings holds timing info for each timestamper
+// that was emitted during the last playback run
 type runTimings struct {
 	trdTime             time.Time
 	sd                  time.Duration
