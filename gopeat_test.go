@@ -99,7 +99,7 @@ func TestSendSpeed(t *testing.T) {
 	callbackHit := false
 	pb.SendTs = func(ts TimeStamper) error {
 		callbackHit = true
-		wallDur := time.Since(simStartTime)
+		wallDur := time.Since(pb.WallStartTime)
 		expDur := dataTime.Sub(simStartTime) / 2
 		timeDrift := wallDur - expDur
 		if timeDrift.Seconds()*1000 > 3 {

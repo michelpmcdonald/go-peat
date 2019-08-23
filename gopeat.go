@@ -369,7 +369,7 @@ func (pb *PlayBack) dataTimer() {
 			// 1.5 seconds before sending to hit the 2 second mark.
 			sd := (intervaleDur - wallDur) - driftFactor
 
-			// Only sleep up to 500 ms at a time so this method
+			// Only sleep up to 250 ms at a time so this method
 			// can continue to respond to API signals, otherwise the
 			// longest sleep duration is data driven and unbound
 			if sd > (250 * time.Millisecond) {
