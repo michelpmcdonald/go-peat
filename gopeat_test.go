@@ -183,7 +183,7 @@ func TestSendLongSleepPause(t *testing.T) {
 		if cbCount == 1 {
 			close(cbChan)
 		}
-		wallDur := time.Since(simStartTime)
+		wallDur := time.Since(pb.WallStartTime)
 		expDur := ts.GetTimeStamp().Sub(simStartTime)
 		if cbCount == 2 {
 			expDur += (100 * time.Millisecond)
