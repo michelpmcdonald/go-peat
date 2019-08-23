@@ -291,6 +291,7 @@ func (pb *PlayBack) controller() {
 		case <-pb.quitChan:
 			return
 		case <-pb.pauseChan:
+			fmt.Println("Control Pause")
 			select {
 			case <-pb.resumeChan:
 			case <-pb.quitChan:
@@ -333,13 +334,13 @@ func (pb *PlayBack) dataTimer() {
 		for _, tsData := range tsDataBuf {
 			tsRecCnt++
 		SleepCheck:
-			// Check for pause or quit signals
 			select {
 			case <-pb.quitChan:
 				// stop the playback
 				return
 
 			case <-pb.pauseChan:
+				fmt.Println("dataTimer Pause")
 				pWallStart := time.Now()
 				select {
 				case <-pb.resumeChan:
@@ -351,32 +352,38 @@ func (pb *PlayBack) dataTimer() {
 			default:
 			}
 
-			// time between this ts data and the prev ts data
-			// adjusted for sim rate TODO rename tsDur
-			intervaleDur := tsData.GetTimeStamp().Sub(prevTsDataTime)
-			intervaleDur = intervaleDur / pb.simRatDur
+			// No need to run timing calcs for repeated timestamps
+			var sd time.Duration
+			var tsDur time.Duration
+			if !tsData.GetTimeStamp().Equal(prevTsDataTime) {
 
-			// actual wall time between now and the time the prev
-			// ts data value was sent out
-			wallDur := time.Since(prevWallSendTime) - pauseDur
+				// time between this ts data and the prev ts data
+				// adjusted for sim rate TODO rename tsDur
+				tsDur := tsData.GetTimeStamp().Sub(prevTsDataTime)
+				tsDur = tsDur / pb.simRatDur
 
-			// sleep duration is the diff between the time between
-			// ts data values and the wall time since the prev
-			// data value was sent.
-			// For example, if the next ts data item is supposed to
-			// go out 2 seconds after the prev data item, and it's
-			// been .5 seconds since the prev item was sent, sleep
-			// 1.5 seconds before sending to hit the 2 second mark.
-			sd := (intervaleDur - wallDur) - driftFactor
+				// actual wall time between now and the time the prev
+				// ts data value was sent out
+				wallDur := time.Since(prevWallSendTime) - pauseDur
 
-			// Only sleep up to 250 ms at a time so this method
-			// can continue to respond to API signals, otherwise the
-			// longest sleep duration is data driven and unbound
-			if sd > (250 * time.Millisecond) {
-				time.Sleep(250 * time.Millisecond)
-				goto SleepCheck
+				// sleep duration is the diff between the time between
+				// ts data values and the wall time since the prev
+				// data value was sent.
+				// For example, if the next ts data item is supposed to
+				// go out 2 seconds after the prev data item, and it's
+				// been .5 seconds since the prev item was sent, sleep
+				// 1.5 seconds before sending to hit the 2 second mark.
+				sd := (tsDur - wallDur) - driftFactor
+
+				// Only sleep up to 250 ms at a time so this method
+				// can continue to respond to API signals, otherwise the
+				// longest sleep duration is data driven and unbounded
+				if sd > (250 * time.Millisecond) {
+					time.Sleep(250 * time.Millisecond)
+					goto SleepCheck
+				}
+				time.Sleep(sd)
 			}
-			time.Sleep(sd)
 
 			// Client call back ie the send.
 			// This is the time sensitive point of consumption.
@@ -390,7 +397,7 @@ func (pb *PlayBack) dataTimer() {
 			// Drift can go negative due to the drift factor
 			// causing the client send to happen to early.
 			driftDur := (wallSendTime.Sub(prevWallSendTime) - pauseDur) -
-				(intervaleDur)
+				(tsDur)
 
 			// reset pause duration, done with pause adjustments
 			pauseDur = time.Duration(0 * time.Second)

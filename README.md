@@ -18,7 +18,16 @@ Distributed Interactive Simulation(DIS): After Action Review(AAR) GIS overlay re
 
 ## Tech details
 
-Internally gopeat runs two goroutines, a buffered read-ahead data stream fetcher and a sender that invokes a client's callback with the client's data at the appropriate replay time.
+Internally gopeat runs three goroutines: 
+
+* Controller:responsible for starting the data loader, starting the timed data writer, and responding to Api control messages like Quit(), Pause()
+Resume(). 
+
+* Data Loader: a buffered read-ahead data stream fetcher that loads the
+source playback data
+
+* Data Timer: provides the timestamped data at the proper replay time
+accounting for the sim rate
 
 The callback model seemed to offer the most flexibility without exposing channels and WaitGroups(Avoid concurrency in your API - [Go Best Practices](https://talks.golang.org/2013/bestpractices.slide#25)
 )
@@ -26,7 +35,9 @@ The callback model seemed to offer the most flexibility without exposing channel
 A back-pressure adjustment internally monitors the amount of time the client callback spends before returning and dynamically makes timing adjustments.  For example, if callbacks are taking 15 milliseconds callbacks will be executed 15 milliseconds earlier that the exact replay time derived from the time-stamped data in an attempt to "lead" the client.
 
 The client should return from the callback as fast as possible to 
-maximize replay time accuracy.
+maximize replay time accuracy.  In some situations the client may not be
+able to keep up and might need to implement a strategy like queuing up
+ data or dropping data.
 
 ## Usage Notes
 In order to utilize, the client should:

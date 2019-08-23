@@ -129,6 +129,10 @@ func TestSendSpeed(t *testing.T) {
 	}
 }
 
+// TestQuitDuringLongSleep forces dataTimer into a long sleep by
+// providing one timestamper 5000 minutes out from PlayBack start time.
+// During the sleep, test confirms that the Quit() command is responded
+// to without delay.
 func TestQuitDuringLongSleep(t *testing.T) {
 	mts := mockSliceBackedDs{}
 	simStartTime := time.Now()
@@ -141,9 +145,71 @@ func TestQuitDuringLongSleep(t *testing.T) {
 	pb.controllerStopped.Add(1)
 	go pb.controller()
 	pb.controllerStarted.Wait()
+	// Wait until the dataTimer has had time to pick up
+	// the first TimeStamper data and is sleeping
 	time.Sleep(200 * time.Millisecond)
 	pb.Quit()
 	pb.Wait()
+
+	rt := time.Since(pb.WallStartTime) - (200 * time.Millisecond)
+	if rt > (time.Millisecond * 1) {
+		t.Errorf("Total PlayBack Time: %f(ms), Expected to be less than 3(ms)",
+			rt.Seconds()*1000)
+	}
+
+	// dataTimer goroutine should shut down within ~250ms of Quit()
+	select {
+	case _, ok := <-pb.timedTs:
+		// should be closed
+		if ok {
+			t.Error("tsDataChan is still open, expected it to be closed")
+		}
+	case <-time.After(275 * time.Millisecond):
+		t.Error("tsDataChan is still open, expected it to be closed")
+	}
+}
+
+func TestSameTimeStamp(t *testing.T) {
+	// Create a new PlayBack at 2x rate
+	var mts mockSliceBackedDs
+	simStartTime := time.Now()
+	dataTime := simStartTime.Add(time.Millisecond * 25)
+	mts.TimeStampers = make([]TimeStamper, 0, 500)
+	for i := 0; i < 500; i++ {
+		mts.TimeStampers = append(mts.TimeStampers,
+			mockTsData{Tim: dataTime, Val: 6})
+	}
+
+	pb, _ := New("test", simStartTime, dataTime, &mts, 1, nil)
+	pb.init()
+
+	cbCount := 0
+	cbDrifts := make([]time.Time, 500)
+	pb.SendTs = func(ts TimeStamper) error {
+		cbCount++
+		cbDrifts[cbCount-1] = time.Now()
+		return nil
+	}
+
+	// run send, it will execute callback
+	pb.controllerStarted.Add(1)
+	pb.controllerStopped.Add(1)
+	go pb.controller()
+	pb.Wait()
+
+	// Make sure callback was called
+	if cbCount != 500 {
+		t.Errorf("Provided PlayBack called %d, expected 2", cbCount)
+	}
+
+	// all 500 should fall withing 3ms of expected time
+	for i, td := range cbDrifts {
+		wallDur := td.Sub(pb.WallStartTime)
+		d := (wallDur - (25 * time.Millisecond)).Seconds() * 1000.0
+		if d > 3 {
+			t.Errorf("Time = %f(ms) index %d; want less than 3(ms)", d, i)
+		}
+	}
 }
 
 // Confirm pause works when called while PlayBack is waiting to send
@@ -170,9 +236,9 @@ func TestSendLongSleepPause(t *testing.T) {
 	pb.init()
 
 	cbChan := make(chan struct{})
-	// Callback measures time to first data playback send.  Since
-	// the first time stamper is 1 second after playback start,
-	// the first callback should be at .5 seconds given the rate is 2x
+	// Callback measures time playback send.  Since the first time
+	// stamper is 1 second after playback start, the first callback
+	// should be at .5 seconds given the rate is 2x
 	cbCount := 0
 	cbDrifts := make([]float64, 2)
 	pb.SendTs = func(ts TimeStamper) error {
