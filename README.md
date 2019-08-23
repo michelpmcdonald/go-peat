@@ -20,7 +20,7 @@ Distributed Interactive Simulation(DIS): After Action Review(AAR) GIS overlay re
 
 Internally gopeat runs three goroutines: 
 
-* Controller:responsible for starting the data loader, starting the timed data writer, and responding to Api control messages like Quit(), Pause()
+* Controller: responsible for starting the data loader, starting the timed data writer, and responding to Api control messages like Quit(), Pause()
 Resume(). 
 
 * Data Loader: a buffered read-ahead data stream fetcher that loads the
