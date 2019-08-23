@@ -63,43 +63,155 @@ func (st *mockTsBlockingDs) SetStartTime(startTime time.Time) {
 func (st *mockTsBlockingDs) SetEndTime(endTime time.Time) {
 }
 
+// Uses slice provided as data
+type mockSliceBackedDs struct {
+	TimeStampers []TimeStamper
+	idx          int
+}
+
+func (st *mockSliceBackedDs) Next() (TimeStamper, bool) {
+	if st.idx < len(st.TimeStampers) {
+		st.idx++
+		return st.TimeStampers[st.idx-1], true
+	}
+	return nil, false
+}
+
+func (st *mockSliceBackedDs) SetStartTime(startTime time.Time) {
+}
+
+func (st *mockSliceBackedDs) SetEndTime(endTime time.Time) {
+}
+
 // TestSendSpeed confirms that a value sent into playback is sent within
 // 3 milliseconds of the proper time
 func TestSendSpeed(t *testing.T) {
 	// Create a new PlayBack at 2x rate
-	var mts mockTsDataSource
+	var mts mockSliceBackedDs
 	simStartTime := time.Now()
 	dataTime := simStartTime.Add(time.Second * 1)
 	pb, _ := New("test", simStartTime, dataTime, &mts, 2, nil)
+	pb.init()
 
 	// Callback measures time to first data playback send.  Since
 	// the first time stamper is 1 second after playback start,
 	// the first callback should be at .5 seconds given the rate is 2x
 	callbackHit := false
 	pb.SendTs = func(ts TimeStamper) error {
-		wallDur := time.Since(simStartTime)
 		callbackHit = true
+		wallDur := time.Since(pb.WallStartTime)
+		expDur := dataTime.Sub(simStartTime) / 2
+		timeDrift := wallDur - expDur
+		if timeDrift.Seconds()*1000 > 3 {
+			t.Errorf("Time = %f(ms); want less than 3(ms)", timeDrift.Seconds()*1000)
+		}
+
 		if ts.(mockTsData).Val != 6 {
 			t.Errorf("Val = %d; want 6", ts.(mockTsData).Val)
 		}
-		if wallDur.Seconds() >= .503 {
-			t.Errorf("Time = %f; want less than .503", wallDur.Seconds())
-		}
+
 		return nil
 	}
-	pb.init()
+
 	// Create a timestamper with a timestamp 1 second out after
 	// start time and push it into the playback data chan
-	pb.tsDataChan <- []TimeStamper{mockTsData{Tim: dataTime, Val: 6}}
-	close(pb.tsDataChan)
+	mts.TimeStampers = []TimeStamper{mockTsData{Tim: dataTime, Val: 6}}
 
-	// run send, it will execute callback
-	pb.wg.Add(1)
-	pb.send()
+	// run dataTimer, it will execute callback
+	pb.controllerStarted.Add(1)
+	pb.controllerStopped.Add(1)
+	pb.controller()
+	pb.controllerStopped.Wait()
 
 	// Make sure call was called
 	if !callbackHit {
 		t.Errorf("Provided PlayBack call was not executed")
+	}
+}
+
+func TestQuitDuringLongSleep(t *testing.T) {
+	mts := mockSliceBackedDs{}
+	simStartTime := time.Now()
+	dataTime := simStartTime.Add(time.Minute * 5000)
+	mts.TimeStampers = []TimeStamper{mockTsData{Tim: dataTime, Val: 6}}
+	pb, _ := New("test", simStartTime, dataTime, &mts, 1, nil)
+
+	//Startup controller
+	pb.controllerStarted.Add(1)
+	pb.controllerStopped.Add(1)
+	go pb.controller()
+	pb.controllerStarted.Wait()
+	time.Sleep(200 * time.Millisecond)
+	pb.Quit()
+	pb.Wait()
+}
+
+// Confirm pause works when called while PlayBack is waiting to send
+// out next timestamper.
+// For example, 2 timestamps in playback, 500ms in between packets.
+// After processing the first ts, PlayBack "waits" for 500ms before
+// sending out the second ts.  During the wait, PlayBack should still
+// respond to Quit() and Pause() API control signals.
+// This test implements the above setup, and pauses for 100ms between
+// ts1 and ts2.  So ts2 should be sent out 600ms(100ms pause + 500ms) after
+// sim start
+func TestSendLongSleepPause(t *testing.T) {
+	// Create a new PlayBack at 2x rate
+	var mts mockSliceBackedDs
+	simStartTime := time.Now()
+	dataTime := simStartTime.Add(time.Millisecond * 25)
+	data2Time := simStartTime.Add(time.Millisecond * 425)
+	mts.TimeStampers = []TimeStamper{
+		mockTsData{Tim: dataTime, Val: 6},
+		mockTsData{Tim: data2Time, Val: 6},
+	}
+
+	pb, _ := New("test", simStartTime, dataTime, &mts, 1, nil)
+	pb.init()
+
+	cbChan := make(chan struct{})
+	// Callback measures time to first data playback send.  Since
+	// the first time stamper is 1 second after playback start,
+	// the first callback should be at .5 seconds given the rate is 2x
+	cbCount := 0
+	cbDrifts := make([]float64, 2)
+	pb.SendTs = func(ts TimeStamper) error {
+		cbCount++
+
+		// lets test know that 1st timestamper has been sent and pb is
+		// processing 2nd timestaper as soon as this call returns
+		if cbCount == 1 {
+			close(cbChan)
+		}
+		wallDur := time.Since(simStartTime)
+		expDur := ts.GetTimeStamp().Sub(simStartTime)
+		if cbCount == 2 {
+			expDur += (100 * time.Millisecond)
+		}
+		cbDrifts[cbCount-1] = (wallDur - expDur).Seconds() * 1000.0
+		return nil
+	}
+
+	// run send, it will execute callback
+	pb.controllerStarted.Add(1)
+	pb.controllerStopped.Add(1)
+	go pb.controller()
+	<-cbChan
+	time.Sleep(250 * time.Millisecond)
+	pb.Pause()
+	time.Sleep(100 * time.Millisecond)
+	pb.Resume()
+	pb.Wait()
+
+	// Make sure call was called
+	if cbCount != 2 {
+		t.Errorf("Provided PlayBack called %d, expected 2", cbCount)
+	}
+
+	for _, td := range cbDrifts {
+		if td > 3.0 {
+			t.Errorf("Time = %f(ms); want less than 3(ms)", td)
+		}
 	}
 }
 
@@ -162,7 +274,6 @@ func TestCreateNoSource(t *testing.T) {
 }
 
 func TestPlay(t *testing.T) {
-	// Create a new mocked data source that emits 23 time stamper values
 	mts := mockTsBlockingDs{}
 
 	// Create a new playback that uses mts
@@ -174,21 +285,21 @@ func TestPlay(t *testing.T) {
 	}
 
 	pb.Play()
+	time.Sleep(10 * time.Millisecond)
 
 	// play worked if it set active flag to true
 	if !pb.replayActive {
 		t.Errorf("replay active false, expected true")
 	}
 
+	// Release mts so we don't leak loader goroutine
+	mts.Wg.Done()
+
 	// play should start data loading from TimeStamper Source, so
 	// confirm source's Next() was called
 	if !mts.NextCalled {
 		t.Error("NextCalled is false, expected true")
 	}
-
-	// Release mts so we don't leak loader goroutine
-	close(pb.quitChan)
-	mts.Wg.Done()
 
 	// Ok at this point, no data was loaded, dataloader should be
 	// closing, and sender should be closing and releasing PlayBacks
@@ -323,7 +434,6 @@ func TestResume(t *testing.T) {
 }
 
 func TestQuit(t *testing.T) {
-	// Create a new mocked data source that emits 23 time stamper values
 	mts := mockTsBlockingDs{}
 
 	// Create a new playback that uses mts
