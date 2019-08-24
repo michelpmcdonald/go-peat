@@ -85,6 +85,10 @@ type PlayBack struct {
 	paused       bool
 	replayActive bool
 
+	// Keep track of pause time, set to 0 after using
+	pauseDur time.Duration
+	pauseMu  sync.RWMutex
+
 	controllerStarted sync.WaitGroup
 
 	// Holds run time timing info for reporting
@@ -269,7 +273,6 @@ func (pb *PlayBack) controller() {
 	time.Sleep(1 * time.Second)
 
 	// Start the timed data producer
-	fmt.Println(time.Now())
 	go pb.dataTimer()
 
 	// Wall simulation start time
@@ -291,9 +294,12 @@ func (pb *PlayBack) controller() {
 		case <-pb.quitChan:
 			return
 		case <-pb.pauseChan:
-			fmt.Println("Control Pause")
+			pWallStart := time.Now()
 			select {
 			case <-pb.resumeChan:
+				pb.pauseMu.Lock()
+				pb.pauseDur = time.Since(pWallStart) + pb.pauseDur
+				pb.pauseMu.Unlock()
 			case <-pb.quitChan:
 				return
 			}
@@ -320,9 +326,6 @@ func (pb *PlayBack) dataTimer() {
 	// changes.
 	var driftFactor time.Duration
 
-	// Keep track of pause time, set to 0 after using
-	pauseDur := time.Duration(0 * time.Second)
-
 	// Sim timestamp of the previous tsData sent
 	prevTsDataTime := pb.StartTime
 
@@ -340,13 +343,9 @@ func (pb *PlayBack) dataTimer() {
 				return
 
 			case <-pb.pauseChan:
-				fmt.Println("dataTimer Pause")
-				pWallStart := time.Now()
 				select {
 				case <-pb.resumeChan:
-					pauseDur = time.Since(pWallStart) + pauseDur
 				case <-pb.quitChan:
-					// stop the playback
 					return
 				}
 			default:
@@ -359,12 +358,14 @@ func (pb *PlayBack) dataTimer() {
 
 				// time between this ts data and the prev ts data
 				// adjusted for sim rate TODO rename tsDur
-				tsDur := tsData.GetTimeStamp().Sub(prevTsDataTime)
+				tsDur = tsData.GetTimeStamp().Sub(prevTsDataTime)
 				tsDur = tsDur / pb.simRatDur
 
 				// actual wall time between now and the time the prev
 				// ts data value was sent out
-				wallDur := time.Since(prevWallSendTime) - pauseDur
+				pb.pauseMu.RLock()
+				wallDur := time.Since(prevWallSendTime) - pb.pauseDur
+				pb.pauseMu.RUnlock()
 
 				// sleep duration is the diff between the time between
 				// ts data values and the wall time since the prev
@@ -373,7 +374,7 @@ func (pb *PlayBack) dataTimer() {
 				// go out 2 seconds after the prev data item, and it's
 				// been .5 seconds since the prev item was sent, sleep
 				// 1.5 seconds before sending to hit the 2 second mark.
-				sd := (tsDur - wallDur) - driftFactor
+				sd = (tsDur - wallDur) - driftFactor
 
 				// Only sleep up to 250 ms at a time so this method
 				// can continue to respond to API signals, otherwise the
@@ -396,11 +397,13 @@ func (pb *PlayBack) dataTimer() {
 			// time stamp calculated desired time between sends.
 			// Drift can go negative due to the drift factor
 			// causing the client send to happen to early.
-			driftDur := (wallSendTime.Sub(prevWallSendTime) - pauseDur) -
+			pb.pauseMu.Lock()
+			driftDur := (wallSendTime.Sub(prevWallSendTime) - pb.pauseDur) -
 				(tsDur)
 
 			// reset pause duration, done with pause adjustments
-			pauseDur = time.Duration(0 * time.Second)
+			pb.pauseDur = time.Duration(0 * time.Second)
+			pb.pauseMu.Unlock()
 
 			// Collect timing data
 			rt := runTimings{}
@@ -452,4 +455,6 @@ func (pb *PlayBack) TimeDrift() {
 	fmt.Printf("Max Drift between: %f(ms)\n", maxDrift)
 	fmt.Printf("Expected Real run time %f(s)\n",
 		(actSec.trdTime.Sub(pb.StartTime) / pb.simRatDur).Seconds())
+		fmt.Println(pb.StartTime)
+		fmt.Println(actSec.trdTime)
 }

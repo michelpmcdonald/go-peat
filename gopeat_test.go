@@ -1,6 +1,7 @@
 package gopeat
 
 import (
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -83,6 +84,111 @@ func (st *mockSliceBackedDs) SetStartTime(startTime time.Time) {
 func (st *mockSliceBackedDs) SetEndTime(endTime time.Time) {
 }
 
+func TestShortPause(t *testing.T) {
+	// Create a new PlayBack at 2x rate
+	var mts mockTsBlockingDs
+	simStartTime := time.Now()
+	dataTime := simStartTime.Add(time.Second * 1)
+	pb, _ := New("test", simStartTime, dataTime, &mts, 2, nil)
+	pb.init()
+
+	// Callback measures time to first data playback send.  Since
+	// the first time stamper is 1 second after playback start,
+	// the first callback should be at .5 seconds given the rate is 2x
+	callbackHit := false
+	pb.SendTs = func(ts TimeStamper) error {
+		callbackHit = true
+		wallDur := time.Since(pb.WallStartTime)
+		expDur := (dataTime.Sub(simStartTime) / 2) + (time.Millisecond * 100)
+		timeDrift := wallDur - expDur
+		if math.Abs(timeDrift.Seconds()*1000) > 3 {
+			t.Errorf("Time = %f(ms); want less than 3(ms)", timeDrift.Seconds()*1000)
+		}
+
+		if ts.(mockTsData).Val != 6 {
+			t.Errorf("Val = %d; want 6", ts.(mockTsData).Val)
+		}
+
+		return nil
+	}
+
+	// Start controller wait til it's ready
+	pb.controllerStarted.Add(1)
+	pb.controllerStopped.Add(1)
+	go pb.controller()
+	pb.controllerStarted.Wait()
+	
+	// Inject some data, close the loader
+	pb.tsDataChan <- []TimeStamper{mockTsData{Tim: dataTime, Val: 6}}
+	time.Sleep(1 * time.Millisecond)
+	mts.Wg.Done()
+
+	pb.Pause()
+	time.Sleep(100 * time.Millisecond)
+	pb.Resume()
+	
+	// Wait til data has been processed
+	pb.controllerStopped.Wait()
+
+	// Make sure callback was called
+	if !callbackHit {
+		t.Errorf("Provided PlayBack call was not executed")
+	}
+}
+
+func TestLongPause(t *testing.T) {
+	// Create a new PlayBack at 2x rate
+	var mts mockTsBlockingDs
+	simStartTime := time.Now()
+	dataTime := simStartTime.Add(time.Second * 1)
+	pb, _ := New("test", simStartTime, dataTime, &mts, 2, nil)
+	pb.init()
+
+	// Callback measures time to first data playback send.  Since
+	// the first time stamper is 1 second after playback start,
+	// the first callback should be at .5 seconds given the rate is 2x
+	callbackHit := false
+	pb.SendTs = func(ts TimeStamper) error {
+		callbackHit = true
+		wallDur := time.Since(pb.WallStartTime)
+		expDur := (dataTime.Sub(simStartTime) / 2) + (time.Millisecond * 523)
+		timeDrift := wallDur - expDur
+		if math.Abs(timeDrift.Seconds()*1000) > 3 {
+			t.Errorf("Time = %f(ms); want less than 3(ms)", timeDrift.Seconds()*1000)
+		}
+
+		if ts.(mockTsData).Val != 6 {
+			t.Errorf("Val = %d; want 6", ts.(mockTsData).Val)
+		}
+
+		return nil
+	}
+
+	// Start controller wait til it's ready
+	pb.controllerStarted.Add(1)
+	pb.controllerStopped.Add(1)
+	go pb.controller()
+	pb.controllerStarted.Wait()
+	
+	// Inject some data, close the loader
+	pb.tsDataChan <- []TimeStamper{mockTsData{Tim: dataTime, Val: 6}}
+	time.Sleep(1 * time.Millisecond)
+	mts.Wg.Done()
+
+	pb.Pause()
+	time.Sleep(523 * time.Millisecond)
+	pb.Resume()
+	
+	// Wait til data has been processed
+	pb.controllerStopped.Wait()
+
+	// Make sure callback was called
+	if !callbackHit {
+		t.Errorf("Provided PlayBack call was not executed")
+	}
+}
+
+
 // TestSendSpeed confirms that a value sent into playback is sent within
 // 3 milliseconds of the proper time
 func TestSendSpeed(t *testing.T) {
@@ -100,9 +206,9 @@ func TestSendSpeed(t *testing.T) {
 	pb.SendTs = func(ts TimeStamper) error {
 		callbackHit = true
 		wallDur := time.Since(pb.WallStartTime)
-		expDur := dataTime.Sub(simStartTime) / 2
+		expDur := ts.GetTimeStamp().Sub(simStartTime) / 2
 		timeDrift := wallDur - expDur
-		if timeDrift.Seconds()*1000 > 3 {
+		if math.Abs(timeDrift.Seconds()*1000) > 3 {
 			t.Errorf("Time = %f(ms); want less than 3(ms)", timeDrift.Seconds()*1000)
 		}
 
@@ -115,7 +221,10 @@ func TestSendSpeed(t *testing.T) {
 
 	// Create a timestamper with a timestamp 1 second out after
 	// start time and push it into the playback data chan
-	mts.TimeStampers = []TimeStamper{mockTsData{Tim: dataTime, Val: 6}}
+	mts.TimeStampers = []TimeStamper{
+		mockTsData{Tim: dataTime, Val: 6},
+		mockTsData{Tim: simStartTime.Add(time.Second * 3), Val: 6},
+	}
 
 	// run dataTimer, it will execute callback
 	pb.controllerStarted.Add(1)
@@ -174,8 +283,8 @@ func TestSameTimeStamp(t *testing.T) {
 	var mts mockSliceBackedDs
 	simStartTime := time.Now()
 	dataTime := simStartTime.Add(time.Millisecond * 25)
-	mts.TimeStampers = make([]TimeStamper, 0, 500)
-	for i := 0; i < 500; i++ {
+	mts.TimeStampers = make([]TimeStamper, 0, 250)
+	for i := 0; i < 250; i++ {
 		mts.TimeStampers = append(mts.TimeStampers,
 			mockTsData{Tim: dataTime, Val: 6})
 	}
@@ -184,7 +293,7 @@ func TestSameTimeStamp(t *testing.T) {
 	pb.init()
 
 	cbCount := 0
-	cbDrifts := make([]time.Time, 500)
+	cbDrifts := make([]time.Time, 250)
 	pb.SendTs = func(ts TimeStamper) error {
 		cbCount++
 		cbDrifts[cbCount-1] = time.Now()
@@ -198,8 +307,8 @@ func TestSameTimeStamp(t *testing.T) {
 	pb.Wait()
 
 	// Make sure callback was called
-	if cbCount != 500 {
-		t.Errorf("Provided PlayBack called %d, expected 2", cbCount)
+	if cbCount != 250 {
+		t.Errorf("Provided PlayBack called %d, expected 250", cbCount)
 	}
 
 	// all 500 should fall withing 3ms of expected time
