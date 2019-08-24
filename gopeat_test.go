@@ -117,7 +117,7 @@ func TestShortPause(t *testing.T) {
 	pb.controllerStopped.Add(1)
 	go pb.controller()
 	pb.controllerStarted.Wait()
-	
+
 	// Inject some data, close the loader
 	pb.tsDataChan <- []TimeStamper{mockTsData{Tim: dataTime, Val: 6}}
 	time.Sleep(1 * time.Millisecond)
@@ -126,7 +126,7 @@ func TestShortPause(t *testing.T) {
 	pb.Pause()
 	time.Sleep(100 * time.Millisecond)
 	pb.Resume()
-	
+
 	// Wait til data has been processed
 	pb.controllerStopped.Wait()
 
@@ -169,7 +169,7 @@ func TestLongPause(t *testing.T) {
 	pb.controllerStopped.Add(1)
 	go pb.controller()
 	pb.controllerStarted.Wait()
-	
+
 	// Inject some data, close the loader
 	pb.tsDataChan <- []TimeStamper{mockTsData{Tim: dataTime, Val: 6}}
 	time.Sleep(1 * time.Millisecond)
@@ -178,7 +178,7 @@ func TestLongPause(t *testing.T) {
 	pb.Pause()
 	time.Sleep(523 * time.Millisecond)
 	pb.Resume()
-	
+
 	// Wait til data has been processed
 	pb.controllerStopped.Wait()
 
@@ -187,7 +187,6 @@ func TestLongPause(t *testing.T) {
 		t.Errorf("Provided PlayBack call was not executed")
 	}
 }
-
 
 // TestSendSpeed confirms that a value sent into playback is sent within
 // 3 milliseconds of the proper time

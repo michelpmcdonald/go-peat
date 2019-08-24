@@ -455,6 +455,6 @@ func (pb *PlayBack) TimeDrift() {
 	fmt.Printf("Max Drift between: %f(ms)\n", maxDrift)
 	fmt.Printf("Expected Real run time %f(s)\n",
 		(actSec.trdTime.Sub(pb.StartTime) / pb.simRatDur).Seconds())
-		fmt.Println(pb.StartTime)
-		fmt.Println(actSec.trdTime)
+	fmt.Println(pb.StartTime)
+	fmt.Println(actSec.trdTime)
 }
