@@ -94,7 +94,8 @@ type PlayBack struct {
 	// Holds run time timing info for reporting
 	timingsInfo *list.List
 
-	controllerStopped sync.WaitGroup
+	// PlayBack end of life.
+	termWg sync.WaitGroup
 
 	WallStartTime time.Time
 }
@@ -140,6 +141,8 @@ func New(symbol string,
 	// Set the simulation rate duration
 	pb.simRatDur = time.Duration(pb.SimRate)
 
+	pb.termWg.Add(1)
+
 	return pb, nil
 }
 
@@ -160,9 +163,8 @@ func (pb *PlayBack) init() {
 // Play starts replay process
 func (pb *PlayBack) Play() {
 	if !pb.replayActive {
-		// Start up the controller, controller starts and controls
-		// the replay
-		pb.controllerStopped.Add(1)
+		// Start up the controller, controller
+		// starts and controls the replay
 		pb.controllerStarted.Add(1)
 		go pb.controller()
 		pb.controllerStarted.Wait()
@@ -185,7 +187,6 @@ func (pb *PlayBack) Pause() {
 // Resume continues a paused playback
 func (pb *PlayBack) Resume() {
 	if pb.paused {
-
 		// Open up the pause chan to allow pausing the
 		// playback which is being restarted here
 		pb.pauseChan = make(chan struct{})
@@ -202,12 +203,15 @@ func (pb *PlayBack) Quit() {
 	if pb.replayActive {
 		close(pb.quitChan)
 		pb.replayActive = false
+	} else {
+		pb.termWg.Done()
 	}
 }
 
-// Wait blocks until the sender shuts down
+// Wait blocks until the controller shuts down
+// or  client calls Quit
 func (pb *PlayBack) Wait() {
-	pb.controllerStopped.Wait()
+	pb.termWg.Wait()
 	pb.replayActive = false
 }
 
@@ -260,7 +264,7 @@ func (pb *PlayBack) loadTimeStampedData() {
 // commands. Blocks, but never sleeps. Terminates when there is no
 // more data or an API command stops it
 func (pb *PlayBack) controller() {
-	defer pb.controllerStopped.Done()
+	defer pb.termWg.Done()
 	defer func() { pb.WallRunDur = time.Since(pb.WallStartTime) }()
 
 	// Start with a clean slate
@@ -287,6 +291,7 @@ func (pb *PlayBack) controller() {
 		case tsData, ok := <-pb.timedTs:
 			if !ok {
 				// All data has been sent
+				fmt.Println("controller done")
 				return
 			}
 			// Client supplied callback

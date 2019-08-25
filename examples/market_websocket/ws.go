@@ -15,6 +15,10 @@ import (
 	"github.com/michelpmcdonald/go-peat/examples/tsprovider"
 )
 
+type pbCmd struct {
+	Cmd string
+}
+
 func main() {
 	http.HandleFunc("/ws", wsHandler)
 	http.HandleFunc("/chart", chartHandler)
@@ -44,13 +48,42 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 	go sendSimTicks(conn)
 }
 
+func commandMonitor(conn *websocket.Conn, pb *gopeat.PlayBack) {
+	// Read client commands
+	for {
+		m := pbCmd{}
+
+		err := conn.ReadJSON(&m)
+		if err != nil {
+			fmt.Println("Error reading json.", err)
+			break
+		}
+
+		fmt.Println(m)
+
+		if m.Cmd == "play" {
+			pb.Play()
+		}
+		if m.Cmd == "quit" {
+			pb.Quit()
+			break
+		}
+		if m.Cmd == "pause" {
+			pb.Pause()
+		}
+		if m.Cmd == "resume" {
+			pb.Resume()
+		}
+	}
+}
+
 func sendSimTicks(conn *websocket.Conn) {
 	defer conn.Close()
 
 	// Set up sim start and end times
 	sym := "mes"
 	simStart := time.Date(2013, 9, 3, 8, 30, 0, 0, time.UTC)
-	simEnd := time.Date(2013, 9, 3, 15, 15, 0, 0, time.UTC)
+	simEnd := time.Date(2013, 9, 3, 10, 30, 0, 0, time.UTC)
 
 	// Create a new timestamper data source
 	fn := "./examples/tsprovider/ES_Trades.csv"
@@ -72,14 +105,14 @@ func sendSimTicks(conn *websocket.Conn) {
 		simStart,
 		simEnd,
 		tsSource,
-		120,
+		100,
 		nil)
 	if errp != nil {
 		return
 	}
 
-	// Create a playback callback to send playback's simulation
-	// time data output our websocket
+	// Create a playback callback to send playback's
+	// simulation time data output our websocket
 	pb.SendTs = func(ts gopeat.TimeStamper) error {
 		err := conn.WriteJSON(ts.(tsprovider.Trade))
 		if err != nil {
@@ -88,9 +121,12 @@ func sendSimTicks(conn *websocket.Conn) {
 		return err
 	}
 
-	// Start the playback
-	pb.Play()
+	go commandMonitor(conn, pb)
+	// pb.Play()
+	// time.Sleep(5*time.Second)
+	// pb.Pause()
+	// time.Sleep(5*time.Second)
+	// pb.Resume()
 	pb.Wait()
 	fmt.Println("Playback concluded")
-
 }

@@ -114,7 +114,6 @@ func TestShortPause(t *testing.T) {
 
 	// Start controller wait til it's ready
 	pb.controllerStarted.Add(1)
-	pb.controllerStopped.Add(1)
 	go pb.controller()
 	pb.controllerStarted.Wait()
 
@@ -128,7 +127,7 @@ func TestShortPause(t *testing.T) {
 	pb.Resume()
 
 	// Wait til data has been processed
-	pb.controllerStopped.Wait()
+	pb.termWg.Wait()
 
 	// Make sure callback was called
 	if !callbackHit {
@@ -166,7 +165,6 @@ func TestLongPause(t *testing.T) {
 
 	// Start controller wait til it's ready
 	pb.controllerStarted.Add(1)
-	pb.controllerStopped.Add(1)
 	go pb.controller()
 	pb.controllerStarted.Wait()
 
@@ -180,7 +178,7 @@ func TestLongPause(t *testing.T) {
 	pb.Resume()
 
 	// Wait til data has been processed
-	pb.controllerStopped.Wait()
+	pb.termWg.Wait()
 
 	// Make sure callback was called
 	if !callbackHit {
@@ -227,9 +225,8 @@ func TestSendSpeed(t *testing.T) {
 
 	// run dataTimer, it will execute callback
 	pb.controllerStarted.Add(1)
-	pb.controllerStopped.Add(1)
 	pb.controller()
-	pb.controllerStopped.Wait()
+	pb.termWg.Wait()
 
 	// Make sure call was called
 	if !callbackHit {
@@ -250,7 +247,6 @@ func TestQuitDuringLongSleep(t *testing.T) {
 
 	//Startup controller
 	pb.controllerStarted.Add(1)
-	pb.controllerStopped.Add(1)
 	go pb.controller()
 	pb.controllerStarted.Wait()
 	// Wait until the dataTimer has had time to pick up
@@ -301,7 +297,6 @@ func TestSameTimeStamp(t *testing.T) {
 
 	// run send, it will execute callback
 	pb.controllerStarted.Add(1)
-	pb.controllerStopped.Add(1)
 	go pb.controller()
 	pb.Wait()
 
@@ -368,7 +363,6 @@ func TestSendLongSleepPause(t *testing.T) {
 
 	// run send, it will execute callback
 	pb.controllerStarted.Add(1)
-	pb.controllerStopped.Add(1)
 	go pb.controller()
 	<-cbChan
 	time.Sleep(250 * time.Millisecond)
