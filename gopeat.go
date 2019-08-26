@@ -64,8 +64,8 @@ type PlayBack struct {
 
 	// Client specifies rate Ex: 2 = 2x, store it as
 	// a duration for actual time use
-	SimRate   int16
-	simRatDur time.Duration
+	rateDur time.Duration
+	rateMu  sync.RWMutex
 
 	// Source-Sender TimeStamper Data
 	tsDataChan    chan []TimeStamper
@@ -104,7 +104,7 @@ type PlayBack struct {
 func New(symbol string,
 	startTime time.Time, endTime time.Time,
 	tsSource TimeStampSource,
-	simRate int16,
+	pbRate uint16,
 	cb OnTsDataReady) (*PlayBack, error) {
 
 	// Time stamped data source is required
@@ -116,7 +116,6 @@ func New(symbol string,
 		StartTime:    startTime,
 		EndTime:      endTime,
 		TsDataSource: tsSource,
-		SimRate:      simRate,
 		SendTs:       cb}
 
 	// No cb create one, just heating the room i guess
@@ -139,7 +138,7 @@ func New(symbol string,
 	pb.TsDataSource.(TimeBracket).SetEndTime(endTime)
 
 	// Set the simulation rate duration
-	pb.simRatDur = time.Duration(pb.SimRate)
+	pb.SetRate(pbRate)
 
 	pb.termWg.Add(1)
 
@@ -158,6 +157,20 @@ func (pb *PlayBack) init() {
 	pb.paused = false
 	pb.replayActive = false
 	pb.timingsInfo = nil
+}
+
+// SetRate controls the realtime rate of the playback.
+func (pb *PlayBack) SetRate(rate uint16) error {
+	if rate < 1 {
+		return errors.New("playBack: rate must be equal to or greath than 1")
+	}
+
+	// Set the simulation rate duration
+	pb.rateMu.Lock()
+	pb.rateDur = time.Duration(rate)
+	pb.rateMu.Unlock()
+
+	return nil
 }
 
 // Play starts replay process
@@ -364,7 +377,9 @@ func (pb *PlayBack) dataTimer() {
 				// time between this ts data and the prev ts data
 				// adjusted for sim rate TODO rename tsDur
 				tsDur = tsData.GetTimeStamp().Sub(prevTsDataTime)
-				tsDur = tsDur / pb.simRatDur
+				pb.rateMu.RLock()
+				tsDur = tsDur / pb.rateDur
+				pb.rateMu.RUnlock()
 
 				// actual wall time between now and the time the prev
 				// ts data value was sent out
@@ -459,7 +474,7 @@ func (pb *PlayBack) TimeDrift() {
 	}
 	fmt.Printf("Max Drift between: %f(ms)\n", maxDrift)
 	fmt.Printf("Expected Real run time %f(s)\n",
-		(actSec.trdTime.Sub(pb.StartTime) / pb.simRatDur).Seconds())
+		(actSec.trdTime.Sub(pb.StartTime) / pb.rateDur).Seconds())
 	fmt.Println(pb.StartTime)
 	fmt.Println(actSec.trdTime)
 }

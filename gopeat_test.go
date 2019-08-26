@@ -84,6 +84,64 @@ func (st *mockSliceBackedDs) SetStartTime(startTime time.Time) {
 func (st *mockSliceBackedDs) SetEndTime(endTime time.Time) {
 }
 
+func TestChangeRate(t *testing.T) {
+	// Create a new PlayBack at 2x rate
+	var mts mockTsBlockingDs
+	simStartTime := time.Now()
+	dataTime := simStartTime.Add(time.Second * 1)
+	pb, _ := New("test", simStartTime, dataTime, &mts, 2, nil)
+	pb.init()
+
+	// Set the read buffer to 2 so that every second record
+	// causes the playback to "run"
+	pb.tsDataBufSize = 2
+
+	// Callback measures time to first data playback send.  Since
+	// the first time stamper is 1 second after playback start,
+	// the first callback should be at .5 seconds given the rate is 2x
+	callbackHit := false
+	pb.SendTs = func(ts TimeStamper) error {
+		callbackHit = true
+		wallDur := time.Since(pb.WallStartTime)
+		expDur := (ts.GetTimeStamp().Sub(simStartTime) / pb.rateDur)
+		timeDrift := wallDur - expDur
+		if math.Abs(timeDrift.Seconds()*1000) > 3 {
+			t.Errorf("Time = %f(ms); want less than 3(ms)", timeDrift.Seconds()*1000)
+		}
+
+		if ts.(mockTsData).Val != 6 {
+			t.Errorf("Val = %d; want 6", ts.(mockTsData).Val)
+		}
+
+		return nil
+	}
+
+	// Start controller wait til it's ready
+	pb.controllerStarted.Add(1)
+	go pb.controller()
+	pb.controllerStarted.Wait()
+
+	// Inject some data
+	pb.tsDataChan <- []TimeStamper{mockTsData{Tim: dataTime, Val: 6}}
+	pb.tsDataChan <- []TimeStamper{mockTsData{Tim: dataTime.Add(100 * time.Millisecond), Val: 6}}
+	time.Sleep(1 * time.Millisecond)
+
+	// Lower the rate to 1
+	pb.SetRate(1)
+
+	// Inject more data, the callback tests the timing given the rate
+	pb.tsDataChan <- []TimeStamper{mockTsData{Tim: dataTime.Add(300 * time.Millisecond), Val: 6}}
+
+	// Wait til data has been processed
+	mts.Wg.Done()
+	pb.termWg.Wait()
+
+	// Make sure callback was called
+	if !callbackHit {
+		t.Errorf("Provided PlayBack call was not executed")
+	}
+}
+
 func TestShortPause(t *testing.T) {
 	// Create a new PlayBack at 2x rate
 	var mts mockTsBlockingDs
@@ -390,7 +448,7 @@ func TestSimRate(t *testing.T) {
 	var mts mockTsDataSource
 	pb, _ := New("test", time.Now(), time.Now(), &mts, 2, nil)
 	dur := time.Duration(time.Minute * 4)
-	simTime := (dur / pb.simRatDur)
+	simTime := (dur / pb.rateDur)
 	if simTime.Minutes() != 2 {
 		t.Errorf("dur(4) / 2 = %f; want 2", simTime.Minutes())
 	}

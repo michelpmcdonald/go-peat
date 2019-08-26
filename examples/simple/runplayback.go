@@ -14,7 +14,7 @@ import (
 
 var simStart = time.Date(2013, 9, 3, 8, 30, 0, 0, time.UTC)
 var simEnd = time.Date(2013, 9, 3, 15, 59, 59, 999, time.UTC)
-var simRate = int16(2500)
+var simRate = uint16(2500)
 var simDurRate = time.Duration(simRate)
 
 var wallStartTime *time.Time
