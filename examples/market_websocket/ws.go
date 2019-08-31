@@ -5,18 +5,20 @@ package main
 
 import (
 	"fmt"
-	"github.com/gorilla/websocket"
 	"io/ioutil"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/michelpmcdonald/go-peat"
 	"github.com/michelpmcdonald/go-peat/examples/tsprovider"
 )
 
 type pbCmd struct {
 	Cmd string
+	Data string
 }
 
 func main() {
@@ -74,6 +76,16 @@ func commandMonitor(conn *websocket.Conn, pb *gopeat.PlayBack) {
 		if m.Cmd == "resume" {
 			pb.Resume()
 		}
+
+		if m.Cmd == "setRate" {
+			rate, err := strconv.ParseUint(m.Data, 10, 16)
+			if err != nil {
+				fmt.Println("SetRate Cmd Error: ", err)
+				continue
+			}
+			fmt.Println("Rate")
+			pb.SetRate(uint16(rate))
+		}
 	}
 }
 
@@ -117,16 +129,12 @@ func sendSimTicks(conn *websocket.Conn) {
 		err := conn.WriteJSON(ts.(tsprovider.Trade))
 		if err != nil {
 			fmt.Println(err)
+			pb.Quit()
 		}
 		return err
 	}
 
 	go commandMonitor(conn, pb)
-	// pb.Play()
-	// time.Sleep(5*time.Second)
-	// pb.Pause()
-	// time.Sleep(5*time.Second)
-	// pb.Resume()
 	pb.Wait()
 	fmt.Println("Playback concluded")
 }
