@@ -32,7 +32,7 @@ accounting for the sim rate
 The callback model seemed to offer the most flexibility without exposing channels and WaitGroups(Avoid concurrency in your API - [Go Best Practices](https://talks.golang.org/2013/bestpractices.slide#25)
 )
 
-A back-pressure adjustment internally monitors the amount of time the client callback spends before returning and dynamically makes timing adjustments.  For example, if callbacks are taking 15 milliseconds callbacks will be executed 15 milliseconds earlier that the exact replay time derived from the time-stamped data in an attempt to "lead" the client.
+A back-pressure adjustment internally monitors the amount of time the client callback spends before returning and dynamically makes timing adjustments.  For example, if callbacks are taking 15 milliseconds callbacks will be executed 15 milliseconds earlier than the exact replay time derived from the time-stamped data in an attempt to "lead" the client.
 
 The client should return from the callback as fast as possible to 
 maximize replay time accuracy.  In some situations the client may not be
@@ -84,7 +84,7 @@ type tsRec struct {
 	amt         float64
 }
 
-// GetTimeStamp - your weird struct on gopeat
+// GetTimeStamp - your struct on gopeat
 func (ts tsRec) GetTimeStamp() time.Time {
 	return ts.tsWeirdName
 }
